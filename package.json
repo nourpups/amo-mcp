@@ -1,0 +1,53 @@
+{
+  "name": "amocrm-mcp",
+  "version": "0.1.0",
+  "description": "Read-only MCP server for AmoCRM REST API v4",
+  "type": "module",
+  "bin": {
+    "amocrm-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "amocrm",
+    "claude",
+    "claude-code"
+  ],
+  "author": "nourpups <nourgithub@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nourpups/amo-mcp.git"
+  },
+  "homepage": "https://github.com/nourpups/amo-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/nourpups/amo-mcp/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}

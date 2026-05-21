@@ -1,0 +1,37 @@
+# Caddy v2 — automatic HTTPS via Let's Encrypt.
+# Reads {$AMO_MCP_DOMAIN} and {$ACME_EMAIL} from .env (forwarded by docker-compose).
+
+{
+    email {$ACME_EMAIL}
+}
+
+{$AMO_MCP_DOMAIN} {
+    # /health — plain JSON, public (no auth) for uptime monitors
+    handle /health {
+        reverse_proxy amo-mcp:8765
+    }
+
+    # /mcp — Streamable HTTP. Bearer-auth is enforced inside the app.
+    handle /mcp* {
+        reverse_proxy amo-mcp:8765 {
+            # SSE: don't buffer server-sent events
+            flush_interval -1
+            # Streams can stay open — bump idle timeout
+            transport http {
+                read_timeout 10m
+            }
+        }
+    }
+
+    # Everything else — 404
+    handle {
+        respond 404
+    }
+
+    encode zstd gzip
+
+    log {
+        output stdout
+        format console
+    }
+}

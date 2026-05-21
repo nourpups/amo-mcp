@@ -1,0 +1,60 @@
+# amocrm-mcp deployment for Ubuntu (or any Linux with Docker Engine + compose v2).
+#
+# Layout:
+#   ../             <- project root, contains src/, package.json, .env
+#   deploy/         <- this file, Dockerfile, Caddyfile
+#
+# Usage on the server:
+#   cd /opt/amo-mcp/deploy
+#   docker compose up -d
+#   docker compose logs -f
+
+name: amo-mcp
+
+services:
+  amo-mcp:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: amocrm-mcp:latest
+    container_name: amo-mcp
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    expose:
+      - "8765"   # internal only — Caddy is the public ingress
+    networks:
+      - amo
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8765/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: amo-mcp-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - amo
+    depends_on:
+      - amo-mcp
+    env_file:
+      - ../.env
+
+networks:
+  amo:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,11 @@
+{
+  "source_sha": "REPLACE_WITH_VERIFIED_40_HEX_COMMIT",
+  "image": "sha256:REPLACE_WITH_VERIFIED_LOCAL_IMAGE_ID",
+  "expected_vhost_sha256": "REPLACE_WITH_CURRENT_VHOST_SHA256",
+  "template_file": "/opt/amo-mcp/releases/VERIFIED_COMMIT/apache-amo.template.inc",
+  "template_sha256": "REPLACE_WITH_PREPARED_TEMPLATE_SHA256",
+  "env_file": "/etc/amo-mcp/runtime.env",
+  "data_dir": "/var/lib/amo-mcp",
+  "port": 18765,
+  "host": "mcp.coddycamp.uz"
+}

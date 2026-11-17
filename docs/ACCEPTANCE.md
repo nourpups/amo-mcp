@@ -1,5 +1,17 @@
 # Connector acceptance — 17 November 2026
 
+## Production update
+
+- Published at `https://mcp.coddycamp.uz/amo/mcp`. App source `f76e6fd80b5b7760aef2d8de55666f8311630e9d`, immutable amd64 image `sha256:492c334737e4ff3166191544151bcfec342131f245eef6412a452e3a0a1356e0`; shared controller source `0decfa1d4a04213d322529c85c0e9ce73b980e06`, accepted main `c5d83d5ae49d9b75977ac632e15058b57e94eff6`. App build inputs are unchanged between app and controller sources.
+- Eleven application tests and 25 controller/installer checks passed, including the real Linux kernel lease case and a full isolated Apache configtest. The installed helper, five wrappers and two loaded systemd bindings were checked. Six competing standard invocations were denied while the actual common lease was held.
+- Production Chromium verified public discovery, deployed source identity, static login and the empty per-connection amo setup form. Screenshot reviewed with the token field masked. Existing Coddy/Junior OAuth issuers and protected MCP endpoints remained correct. New container UID1000, restart count0 and query-free access logging were verified.
+- Route publication took 2.52 seconds. The verified CI job ran 13 seconds; run queue0 seconds, runner allocation3 seconds.
+- Monitoring outcome is **incomplete/failed**, not fully green: four local observer/source gaps (~307,278,1052,308 seconds) coincide with Mac sleep/wake records, and one Junior MCP request received no HTTP response at16:25:11UTC. Subsequent direct checks returned200 for all four services. The HTTP failure cause is unresolved; no httpd journal restart/error event was found in its window. New amo sampling started126 seconds after publication; no amo HTTP failure was observed in the collected samples. No further production changes followed discovery of the monitor incident.
+- Certbot renewal was already in a failed state before this task. The shared wiring was installed and contention-tested; that pre-existing renewal failure was not repaired.
+- Real successful amo data calls and complete sessions in actual Claude/Codex/ChatGPT applications await an end user entering a valid domain/token. No operator integration token is required or embedded.
+
+## Before-publication checkpoint (historical)
+
 Implemented: shared static login followed by per-connection amoCRM domain/token entry, OAuth authorization code + S256 PKCE, DCR, confidential/public client authentication, refresh/revoke, encrypted SQLite grants and immutable MCP session ownership. All ten upstream tools remain GET-only; stdio remains supported.
 
 Verified locally with Node 24:

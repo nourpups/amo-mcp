@@ -49,4 +49,4 @@ Browser checks are permanently desktop-only for this project. Mask all secret in
 
 After building, `node scripts/hash-password.mjs` reads the static login password from stdin and prints only its scrypt hash. Feed stdin directly from your secret-management process. Never place the plaintext in command arguments or shell history.
 
-`node scripts/revoke-connection.mjs <connection-id>` revokes a connection using `MCP_DB_PATH` and `MCP_ENCRYPTION_KEY` from the process's private environment. It does not print saved credentials. All subsequent MCP calls, including existing sessions, must reject that connection.
+`node scripts/revoke-connection.mjs <connection-id>` revokes a connection using `MCP_DB_PATH` and `MCP_ENCRYPTION_KEY` from the process's private environment. It does not print saved credentials. All subsequent MCP calls, including existing sessions, must reject that connection. Existing idle streaming connections are closed on their normal session expiry; use the OAuth revocation endpoint when immediate transport shutdown is required.

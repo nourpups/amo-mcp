@@ -131,3 +131,19 @@ test("two browser tabs keep separate pending flows and wrong encryption keys fai
     assert.throws(() => new AuthStore(f.dbPath, randomBytes(32).toString("base64")));
   } finally { await f.close(); }
 });
+
+test("confidential DCR clients retain secrets and support advertised post/basic authentication", async () => {
+  const f = await fixture(); try {
+    for (const method of ["client_secret_post", "client_secret_basic"]) {
+      const client = await f.register(method); assert.ok(client.client_secret); assert.equal(client.client_secret_expires_at, 0);
+      const flow = await f.finish(client.client_id, "confidential", `amo-test-${method}`);
+      const params = { grant_type: "authorization_code", client_id: client.client_id, code: flow.code, code_verifier: flow.verifier, redirect_uri: flow.redirect, resource: PUBLIC };
+      const wrong = await f.form("/amo/oauth/token", { ...params, client_secret: "wrong" }); assert.equal(wrong.status, 400); assert.equal((await wrong.json()).error, "invalid_client");
+      let response: Response;
+      if (method === "client_secret_post") response = await f.form("/amo/oauth/token", { ...params, client_secret: client.client_secret });
+      else response = await f.request("/amo/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}` }, body: new URLSearchParams(params) });
+      assert.equal(response.status, 200, await response.clone().text()); const tokens = await response.json(); assert.equal((await f.auth.verify(tokens.access_token)).subdomain, "confidential");
+      await f.restart(); assert.equal((await f.auth.verify(tokens.access_token)).subdomain, "confidential");
+    }
+  } finally { await f.close(); }
+});

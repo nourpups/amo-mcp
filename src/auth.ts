@@ -187,6 +187,34 @@ export function createAuth(options: AuthOptions) {
     }) as typeof res.redirect;
     next();
   }, authorizationHandler({ provider }));
+  const normalizeClientAuth = (req: Request, res: Response, next: () => void) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    if (req.method !== "POST") { next(); return; }
+    const authorization = req.headers.authorization;
+    let basic = false;
+    const reject = () => { res.status(400).json({ error: "invalid_client", error_description: "Invalid client authentication" }); };
+    if (authorization) {
+      const matched = /^Basic ([A-Za-z0-9+/]+=*)$/i.exec(authorization);
+      if (!matched || req.body?.client_secret !== undefined) { reject(); return; }
+      try {
+        const decoded = Buffer.from(matched[1]!, "base64").toString("utf8");
+        const colon = decoded.indexOf(":");
+        if (colon < 0) { reject(); return; }
+        const clientId = decodeURIComponent(decoded.slice(0, colon).replace(/\+/g, " "));
+        const clientSecret = decodeURIComponent(decoded.slice(colon + 1).replace(/\+/g, " "));
+        if (req.body?.client_id !== undefined && req.body.client_id !== clientId) { reject(); return; }
+        req.body = { ...req.body, client_id: clientId, client_secret: clientSecret };
+        basic = true;
+      } catch { reject(); return; }
+    }
+    const client = typeof req.body?.client_id === "string" ? store.get<OAuthClientInformationFull>("clients", req.body.client_id) : undefined;
+    if (client) {
+      const method = client.token_endpoint_auth_method ?? "client_secret_post";
+      if ((method === "client_secret_basic") !== basic || (client.client_secret && (typeof req.body?.client_secret !== "string" || !same(req.body.client_secret, client.client_secret)))) { reject(); return; }
+    }
+    next();
+  };
+  router.use([`${base}/oauth/token`, `${base}/oauth/revoke`], express.urlencoded({ extended: false, limit: "24kb" }), normalizeClientAuth);
   router.use(`${base}/oauth/token`, tokenHandler({ provider }));
   router.use(`${base}/oauth/register`, clientRegistrationHandler({ clientsStore: provider.clientsStore, clientSecretExpirySeconds: 0 }));
   router.use(`${base}/oauth/revoke`, revocationHandler({ provider }));

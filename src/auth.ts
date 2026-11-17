@@ -24,6 +24,7 @@ const FLOW_MS = 10 * 60_000;
 const ACCESS_MS = 60 * 60_000;
 const REFRESH_MS = 30 * 24 * 60 * 60_000;
 const SCOPE = "amo:read";
+const SCOPES = [SCOPE, "offline_access"];
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const secret = () => randomBytes(32).toString("base64url");
 const same = (a: string, b: string) => timingSafeEqual(Buffer.from(digest(a)), Buffer.from(digest(b)));
@@ -61,6 +62,12 @@ export function createAuth(options: AuthOptions) {
   const cookiePath = base || "/";
   const store = new AuthStore(options.dbPath, options.encryptionKey);
   const router = express.Router();
+  router.use((req, res, next) => {
+    if (req.path.startsWith(`${base}/`) || req.path === `/.well-known/oauth-authorization-server${base}` || req.path === `/.well-known/oauth-protected-resource${resource.pathname}`) {
+      res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
+    }
+    next();
+  });
   const cleanup = setInterval(() => store.cleanup(), 60_000); cleanup.unref();
   store.cleanup();
 
@@ -102,7 +109,7 @@ export function createAuth(options: AuthOptions) {
     },
     async authorize(client, params, res) {
       resourceCheck(params.resource);
-      if (params.scopes?.some((scope) => scope !== SCOPE)) throw new InvalidScopeError("Unsupported scope");
+      if (params.scopes?.some((scope) => !SCOPES.includes(scope))) throw new InvalidScopeError("Unsupported scope");
       const req = res.req;
       const cookies = (req.headers.cookie ?? "").split(";").map((v) => v.trim().split("="));
       let browser = cookies.find(([name]) => name === cookieName)?.[1];
@@ -137,12 +144,12 @@ export function createAuth(options: AuthOptions) {
         resourceCheck(requestedResource);
         let record: TokenRecord;
         try { record = tokenFor(refreshToken, "refresh"); } catch { throw new InvalidGrantError("Invalid refresh token"); }
-        if (record.clientId !== client.client_id || (scopes !== undefined && (scopes.length !== 1 || scopes[0] !== SCOPE))) throw new InvalidGrantError("Invalid refresh token or scope");
+        if (record.clientId !== client.client_id || (scopes !== undefined && (!scopes.includes(SCOPE) || scopes.some((scope) => !record.scopes.includes(scope))))) throw new InvalidGrantError("Invalid refresh token or scope");
         const grant = grantFor(record.connectionId);
         grant.expires = Date.now() + REFRESH_MS;
         store.put("grants", grant.connectionId, grant, grant.expires);
         store.delete("refresh", digest(refreshToken));
-        return issue({ ...grant, scopes: scopes ?? grant.scopes });
+        return issue({ ...grant, scopes: scopes ?? record.scopes });
       });
     },
     async verifyAccessToken(token) {
@@ -161,13 +168,13 @@ export function createAuth(options: AuthOptions) {
     response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
     revocation_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
-    code_challenge_methods_supported: ["S256"], scopes_supported: [SCOPE], authorization_response_iss_parameter_supported: true,
+    code_challenge_methods_supported: ["S256"], scopes_supported: SCOPES, authorization_response_iss_parameter_supported: true,
   };
   const metadataReply = (value: unknown) => (_req: Request, res: Response) => { res.set({ "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" }).json(value); };
   router.get(`/.well-known/oauth-authorization-server${base}`, metadataReply(metadata));
   // Legacy clients append the well-known path to the issuer instead of inserting it.
   router.get(`${base}/.well-known/oauth-authorization-server`, metadataReply(metadata));
-  router.get(`/.well-known/oauth-protected-resource${resource.pathname}`, metadataReply({ resource: resource.href, authorization_servers: [issuer], scopes_supported: [SCOPE], resource_name: "amoCRM" }));
+  router.get(`/.well-known/oauth-protected-resource${resource.pathname}`, metadataReply({ resource: resource.href, authorization_servers: [issuer], scopes_supported: SCOPES, resource_name: "amoCRM" }));
 
   // Include issuer identification on SDK-generated authorization error redirects too.
   router.use(`${base}/oauth/authorize`, (_req, res, next) => {
@@ -194,10 +201,16 @@ export function createAuth(options: AuthOptions) {
     return { flow, pending };
   }
   function form(res: Response, title: string, action: string, flow: string, csrf: string, fields: string, error = "") {
-    res.type("html").send(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)} — amoCRM MCP</title><style>body{font:16px system-ui;background:#f3f5f8;color:#182433;margin:0;padding:24px}main{max-width:420px;margin:8vh auto;background:white;padding:32px;border-radius:18px;box-shadow:0 8px 32px #18243312}h1{font-size:24px;margin-top:0}label{display:block;margin:18px 0 6px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #b9c5d4;border-radius:8px;font:inherit}button{width:100%;padding:13px;margin-top:24px;border:0;border-radius:8px;background:#1858ce;color:white;font:inherit;cursor:pointer}.error{color:#b42222}p{line-height:1.5;color:#4b5b70}</style></head><body><main><h1>${escape(title)}</h1>${error ? `<p class="error" role="alert">${escape(error)}</p>` : ""}<form method="post" action="${escape(action)}"><input type="hidden" name="flow" value="${escape(flow)}"><input type="hidden" name="csrf" value="${escape(csrf)}">${fields}<button type="submit">Продолжить</button></form></main></body></html>`);
+    res.type("html").send(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)} — amoCRM MCP</title><style>body{font:16px system-ui;background:#f3f5f8;color:#182433;margin:0;padding:24px}main{max-width:420px;margin:8vh auto;background:white;padding:32px;border-radius:18px;box-shadow:0 8px 32px #18243312}h1{font-size:24px;margin-top:0}label{display:block;margin:18px 0 6px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #b9c5d4;border-radius:8px;font:inherit}button{width:100%;padding:13px;margin-top:24px;border:0;border-radius:8px;background:#1858ce;color:white;font:inherit;cursor:pointer}.error{color:#b42222}p{line-height:1.5;color:#4b5b70}</style></head><body><main><h1>${escape(title)}</h1>${error ? `<p class="error" role="alert">${escape(error)}</p>` : ""}<form method="post" action="${escape(action)}"><input type="hidden" name="flow" value="${escape(flow)}"><input type="hidden" name="csrf" value="${escape(csrf)}">${fields}<button type="submit">${action.endsWith("/connect") ? "Подключить" : "Продолжить"}</button></form></main></body></html>`);
   }
   const loginFields = '<p>Войдите, чтобы подключить ваш аккаунт amoCRM.</p><label for="login">Логин</label><input id="login" name="login" autocomplete="username" required maxlength="200"><label for="password">Пароль</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">';
-  const connectFields = '<p>Данные сохранятся только для этого подключения. Доступ к amoCRM — только чтение.</p><label for="domain">Домен amoCRM</label><input id="domain" name="domain" placeholder="company.amocrm.ru" required maxlength="250" autocomplete="off"><label for="token">Долгосрочный токен интеграции</label><input id="token" name="token" type="password" required maxlength="16000" autocomplete="off"><p>Токен можно создать в amoCRM: Настройки → Интеграции → ваша интеграция → Ключи и доступы.</p>';
+  const amoFields = '<p>Данные сохранятся только для этого подключения. Доступ к amoCRM — только чтение.</p><label for="domain">Домен amoCRM</label><input id="domain" name="domain" placeholder="company.amocrm.ru" required maxlength="250" autocomplete="off"><label for="token">Долгосрочный токен интеграции</label><input id="token" name="token" type="password" required maxlength="16000" autocomplete="off"><p>Токен можно создать в amoCRM: Настройки → Интеграции → ваша интеграция → Ключи и доступы.</p>';
+  const connectFields = (pending: Pending) => {
+    const client = store.get<OAuthClientInformationFull>("clients", pending.clientId);
+    const name = client?.client_name || "MCP-клиент";
+    const callback = new URL(pending.params.redirectUri);
+    return `<p><strong>${escape(name)}</strong> получит доступ на чтение к указанному аккаунту amoCRM. После подключения вы вернётесь на <strong>${escape(callback.host)}</strong>.</p>${amoFields}`;
+  };
   const browserHeaders = (_req: Request, res: Response, next: () => void) => {
     res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" }); next();
   };
@@ -220,7 +233,7 @@ export function createAuth(options: AuthOptions) {
   });
   router.get(`${base}/connect`, (req, res) => {
     const state = pendingFor(req); if (!state || !state.pending.authenticated) { missing(res); return; }
-    form(res, "Подключение amoCRM", `${base}/connect`, state.flow, state.pending.csrf, connectFields);
+    form(res, "Подключение amoCRM", `${base}/connect`, state.flow, state.pending.csrf, connectFields(state.pending));
   });
   router.post(`${base}/connect`, browserLimit, async (req, res) => {
     const state = pendingFor(req); if (!state || !state.pending.authenticated) { missing(res); return; }
@@ -231,7 +244,7 @@ export function createAuth(options: AuthOptions) {
       if (!token || token.length > 16_000 || /\s/.test(token)) throw new Error("Invalid token");
       await options.validateAmo(subdomain, token);
     } catch {
-      res.status(400); form(res, "Подключение amoCRM", `${base}/connect`, state.flow, state.pending.csrf, connectFields, "Не удалось проверить домен и токен amoCRM. Проверьте данные и срок действия токена."); return;
+      res.status(400); form(res, "Подключение amoCRM", `${base}/connect`, state.flow, state.pending.csrf, connectFields(state.pending), "Не удалось проверить домен и токен amoCRM. Проверьте данные и срок действия токена."); return;
     }
     const code = secret();
     const done = store.transaction(() => {
@@ -239,7 +252,7 @@ export function createAuth(options: AuthOptions) {
       const fresh = store.get<Pending>("pending", digest(state.flow));
       if (!fresh || !same(fresh.csrf, state.pending.csrf) || !fresh.authenticated) return false;
       const connectionId = randomUUID();
-      const grant: Grant = { connectionId, subdomain, token, clientId: fresh.clientId, scopes: [SCOPE], resource: resource.href, expires: Date.now() + 60_000 };
+      const grant: Grant = { connectionId, subdomain, token, clientId: fresh.clientId, scopes: [SCOPE, ...(fresh.params.scopes?.includes("offline_access") ? ["offline_access"] : [])], resource: resource.href, expires: Date.now() + 60_000 };
       store.put("grants", connectionId, grant, grant.expires);
       store.put("codes", digest(code), { connectionId, clientId: grant.clientId, scopes: grant.scopes, resource: grant.resource, expires: Date.now() + 60_000, challenge: fresh.params.codeChallenge, redirectUri: fresh.params.redirectUri }, Date.now() + 60_000);
       store.delete("pending", digest(state.flow));

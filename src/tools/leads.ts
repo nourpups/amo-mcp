@@ -41,7 +41,10 @@ const listShape = {
   page: z.number().int().min(1).default(1),
   query: z.string().optional(),
   order: z
-    .record(z.enum(["created_at", "updated_at", "id"]), z.enum(["asc", "desc"]))
+    .partialRecord(
+      z.enum(["created_at", "updated_at", "id"]),
+      z.enum(["asc", "desc"]),
+    )
     .optional(),
   filter: filterSchema,
   with: withSchema,

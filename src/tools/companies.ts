@@ -34,7 +34,7 @@ export function register(server: McpServer, client: AmoClient) {
         page: z.number().int().min(1).default(1),
         query: z.string().optional(),
         order: z
-          .record(
+          .partialRecord(
             z.enum(["created_at", "updated_at", "id"]),
             z.enum(["asc", "desc"]),
           )

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -274,6 +275,8 @@ class Controller:
             if not Path(manifest[key]).is_absolute():
                 raise Denied("paths must be absolute")
             private_file(manifest[key], self.uid)
+        if Path(manifest["env_file"]).stat().st_mode & 0o077:
+            raise Denied("private runtime env must have mode600 or stricter")
         if sha(Path(manifest["template_file"]).read_bytes()) != manifest["template_sha256"]:
             raise Denied("route template changed")
         data = Path(manifest["data_dir"])
@@ -515,7 +518,11 @@ def main():
                 command = args.args[1:] if args.args[:1] == ["--"] else args.args
                 if not command or not Path(command[0]).is_absolute():
                     raise Denied("run requires an absolute executable and argv after --")
-                sys.exit(controller.runtime.delegate(command))
+                status = controller.runtime.delegate(command)
+                if status < 0:
+                    signal.signal(-status, signal.SIG_DFL)
+                    os.kill(os.getpid(), -status)
+                sys.exit(status)
 
 
 if __name__ == "__main__":

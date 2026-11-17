@@ -31,13 +31,13 @@ stdio continues using `AMOCRM_SUBDOMAIN` and `AMOCRM_ACCESS_TOKEN`. Remote HTTP 
 
 ## ccprod publication
 
-Use `deploy/ccprod.compose.yml`, not the standalone Caddy stack: Apache already owns this host's TLS ports. Prepare the image with `deploy/Dockerfile`, label it with the verified source commit, then use the verified immutable image ID or registry digest as `AMO_MCP_IMAGE`. Compose publication has no build step. The runtime env file and persistent data directory are supplied by absolute external paths.
+The installed publication path is the root-owned `mcp-release` controller. Follow [controller instructions](../deploy/release/README.md) and [shared wiring](../deploy/release/WIRING.md). The controller consumes an already built immutable image, checks its source/architecture/UID, validates the complete Apache candidate tree and checks local plus public health before accepting the route. `deploy/ccprod.compose.yml` is a reference app-only configuration, not the installed executor.
 
-Include `deploy/apache-amo.inc` inside the existing TLS virtual host for `mcp.coddycamp.uz`. Preserve its DocumentRoot, root `/mcp`, root discovery, and certificate. Exclude `/amo/` requests from the existing combined access log and route them to a dedicated log format containing `%U` rather than `%r` or `%q`; otherwise authorization codes can leak through query logging. Add the include to the owning configuration template as well, so subsequent Coddy deployments preserve it.
+The checked route template is `deploy/apache-amo.inc`; `@PORT@` is rendered by the controller. Do not include the raw template directly. The controller adds its own Include and conditional log exclusion, preserving the existing root MCP, certificate and unrelated vhost changes. OAuth requests use a dedicated access log without query strings.
 
-Before publication establish a common server-side deployment gate covering every process that can replace the service or this virtual host. A new amo-only lock does not serialize existing Coddy deployment paths. Validate Apache configuration, localhost health, container UID/SQLite access, public discovery paths and recovery before switching. Retain the preceding compatible image and routing; on first install recovery removes only the new amo routing/service. Do not downgrade to the old role-unaware/global-credential HTTP implementation against the OAuth store.
+Supported Apache, certificate renewal and discovered controller entrypoints share the installed OS lease. Arbitrary privileged root-shell commands remain outside that interface. Preserve the vendor executables and wiring metadata; upgrades must reverify the wrappers and loaded systemd bindings.
 
-Run availability monitoring before the first production change through final acceptance. Register its real sanitized JSONL source with `dev-task-state monitor-start` and execute publication through `release-run --operation forward`; this local gate complements the shared server gate. No known outage or backup is authorized by these instructions.
+Monitor before publication and execute local forward operations through `dev-task-state release-run --operation forward`. A failed monitor prevents additional forward operations. Keep failure history and coverage gaps explicit; recovery uses the existing controller release ID and does not require the failed new public endpoint to be healthy. No backup creation or known outage is implicitly authorized.
 
 ## Acceptance
 

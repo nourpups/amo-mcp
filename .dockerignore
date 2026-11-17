@@ -12,3 +12,7 @@ dist
 deploy
 README.md
 .dockerignore
+data
+*.sqlite*
+*.db
+.env.*

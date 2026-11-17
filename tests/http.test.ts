@@ -1,6 +1,46 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
+import { request as httpRequest } from "node:http";
+
+// Native fetch may replace Host with the URL host. Use the same explicit Host
+// that the production reverse proxy preserves, without weakening server checks.
+function localFetch(
+  url: string,
+  init: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  } = {},
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      url,
+      { method: init.method, headers: init.headers },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on("error", reject);
+        response.on("end", () => {
+          const headers = new Headers();
+          for (const [key, value] of Object.entries(response.headers)) {
+            if (value !== undefined)
+              headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+          }
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: response.statusCode!,
+              headers,
+            }),
+          );
+        });
+      },
+    );
+    request.on("error", reject);
+    request.end(init.body);
+  });
+}
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHttpApp } from "../src/http-server.js";
 
@@ -57,7 +97,7 @@ test("HTTP checks bearer and immutable session owner on every request, refresh p
     method = "POST",
     extra: Record<string, string> = {},
   ) {
-    return fetch(`${base}/amo/mcp`, {
+    return localFetch(`${base}/amo/mcp`, {
       method,
       headers: {
         host: "test.example",
@@ -116,8 +156,11 @@ test("HTTP checks bearer and immutable session owner on every request, refresh p
     await revoke?.("A");
     assert.equal((await request("a", session)).status, 404);
     assert.equal(
-      (await fetch(`${base}/amo/health`, { headers: { host: "test.example" } }))
-        .status,
+      (
+        await localFetch(`${base}/amo/health`, {
+          headers: { host: "test.example" },
+        })
+      ).status,
       200,
     );
   } finally {

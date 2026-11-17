@@ -9,3 +9,5 @@ dist/
 *.sqlite*
 *.db
 coverage/
+
+__pycache__/

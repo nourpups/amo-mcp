@@ -99,7 +99,7 @@ export function createAuth(options: AuthOptions) {
         for (const uri of client.redirect_uris) {
           const u = new URL(uri);
           const local = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
-          if (u.username || u.password || u.hash || (u.protocol !== "https:" && !(local && u.protocol === "http:"))) throw new InvalidClientMetadataError("Redirect URIs must use HTTPS or a loopback HTTP address");
+          if (u.username || u.password || u.hash || u.hostname.includes("*") || (u.protocol !== "https:" && !(local && u.protocol === "http:"))) throw new InvalidClientMetadataError("Redirect URIs must use HTTPS or a loopback HTTP address");
         }
         if (!["none", "client_secret_post", "client_secret_basic"].includes(client.token_endpoint_auth_method ?? "client_secret_post")) throw new InvalidClientMetadataError("Unsupported token endpoint auth method");
         const result = { ...client, client_id: randomUUID(), client_id_issued_at: Math.floor(Date.now() / 1000), client_secret_expires_at: client.client_secret ? 0 : undefined };
@@ -211,11 +211,15 @@ export function createAuth(options: AuthOptions) {
     const callback = new URL(pending.params.redirectUri);
     return `<p><strong>${escape(name)}</strong> получит доступ на чтение к указанному аккаунту amoCRM. После подключения вы вернётесь на <strong>${escape(callback.host)}</strong>.</p>${amoFields}`;
   };
-  const browserHeaders = (_req: Request, res: Response, next: () => void) => {
-    res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" }); next();
+  const browserHeaders = (req: Request, res: Response, next: () => void) => {
+    const pending = pendingFor(req)?.pending;
+    // Chromium applies form-action to the POST's redirect chain as well.
+    // Only the registered callback saved in this browser's validated flow is allowed.
+    const callbackOrigin = pending ? new URL(pending.params.redirectUri).origin : "";
+    res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${callbackOrigin ? ` ${callbackOrigin}` : ""}; frame-ancestors 'none'; base-uri 'none'` }); next();
   };
   const browserLimit = rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: true, legacyHeaders: false, message: "Слишком много попыток. Повторите позже." });
-  router.use([`${base}/login`, `${base}/connect`], browserHeaders, express.urlencoded({ extended: false, limit: "24kb" }));
+  router.use([`${base}/login`, `${base}/connect`], express.urlencoded({ extended: false, limit: "24kb" }), browserHeaders);
   const missing = (res: Response) => res.status(400).type("text").send("Подключение истекло или недействительно. Начните подключение заново в вашем клиенте.");
   router.get(`${base}/login`, (req, res) => {
     const state = pendingFor(req); if (!state) { missing(res); return; }

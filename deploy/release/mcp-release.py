@@ -549,7 +549,8 @@ def main():
                     raise Denied("run requires an absolute executable and argv after --")
                 status = controller.runtime.delegate(command)
                 if status < 0:
-                    signal.signal(-status, signal.SIG_DFL)
+                    if -status not in (signal.SIGKILL, signal.SIGSTOP):
+                        signal.signal(-status, signal.SIG_DFL)
                     os.kill(os.getpid(), -status)
                 sys.exit(status)
 

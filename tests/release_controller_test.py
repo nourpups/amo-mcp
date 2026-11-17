@@ -242,6 +242,28 @@ with controller.lease():
             m.private_file(symlink, os.getuid())
         self.trust.start()
 
+    def test_delegated_termination_preserves_sigkill_and_sigterm(self):
+        script = """
+import importlib.util,json,os,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('gate',sys.argv[1]);gate=importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
+gate.private_directory=lambda path,uid=0:Path(path)
+gate.private_file=lambda path,uid=0:Path(path)
+original=gate.Controller
+gate.Controller=lambda config:original(config,uid=os.getuid())
+gate.os.geteuid=lambda:0
+gate.Runtime.delegate=lambda self,argv:-int(sys.argv[3])
+config=sys.argv[2]; signum=sys.argv[3]
+gate.Runtime.delegate=lambda self,argv:-int(signum)
+sys.argv=['gate','--config',config,'run','--','/unused']
+gate.main()
+"""
+        config = self.root / 'signal-config.json'
+        config.write_text(json.dumps(self.cfg))
+        for signum in (9, 15):
+            result = subprocess.run([sys.executable, '-c', script, str(SOURCE), str(config), str(signum)], capture_output=True)
+            self.assertEqual(result.returncode, -signum)
+
 
 if __name__ == "__main__":
     unittest.main()

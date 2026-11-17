@@ -138,7 +138,7 @@ class InstallerTest(unittest.TestCase):
         original_lstat = Path.lstat
         def linux_link_mode(path):
             info = original_lstat(path)
-            if path == certbot:
+            if path == certbot and stat.S_ISLNK(info.st_mode):
                 fields = list(info)
                 fields[0] = stat.S_IFLNK | 0o777
                 return os.stat_result(fields)

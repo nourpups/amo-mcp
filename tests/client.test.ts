@@ -134,9 +134,9 @@ test("all ten tools retain their schemas and use only their injected client", as
       ]);
     }
     for (const [name, args] of Object.entries({
-      leads_list: {},
+      leads_list: { order: { id: "desc" } },
       leads_get: { id: 1 },
-      contacts_list: {},
+      contacts_list: { order: { id: "desc" } },
       contacts_get: { id: 1 },
       tasks_list: {},
       events_list: {},

@@ -68,11 +68,53 @@ def atomic(path, data, mode=0o600):
             os.unlink(name)
 
 
+def process_identity(pid):
+    fields = Path("/proc/%s/stat" % pid).read_text().rpartition(")")[2].split()
+    return int(fields[1]), fields[19]
+
+
+def ancestor_lease(path, metadata, uid=0):
+    """Prove a synchronous ancestor owns the actual kernel FLOCK, not an env flag."""
+    try:
+        owner, ticks, descriptor = metadata
+        if owner < 1 or descriptor < 0:
+            return False
+        current = os.getpid()
+        ancestry = set()
+        for _ in range(128):
+            parent, _ = process_identity(current)
+            if parent <= 0 or parent in ancestry:
+                break
+            ancestry.add(parent)
+            if parent == owner:
+                break
+            current = parent
+        if owner not in ancestry or process_identity(owner)[1] != ticks:
+            return False
+        info = Path("/proc/%s/fd/%s" % (owner, descriptor)).stat()
+        active = Path(path).stat()
+        if info.st_uid != uid or (info.st_dev, info.st_ino) != (active.st_dev, active.st_ino):
+            return False
+        device = (os.major(active.st_dev), os.minor(active.st_dev), active.st_ino)
+        for line in Path("/proc/locks").read_text().splitlines():
+            fields = line.split()
+            if len(fields) >= 6 and fields[1:4] == ["FLOCK", "ADVISORY", "WRITE"] and fields[4] == str(owner):
+                major, minor, inode = fields[5].split(":")
+                if (int(major, 16), int(minor, 16), int(inode)) == device:
+                    return True
+    except (OSError, ValueError, IndexError):
+        pass
+    return False
+
+
 class Runtime:
     lock_fd = None
+    lock_owner = None
+    lease_check = None
 
-    def command(self, argv, capture=False):
-        # Diagnostics are categorical: Docker/configtest output may contain private config.
+    def execution(self):
+        if self.lease_check is not None and not self.lease_check():
+            raise Denied("ancestor lease is no longer held")
         environment = dict(os.environ)
         inherited = ()
         if self.lock_fd is not None:
@@ -80,6 +122,20 @@ class Runtime:
             inherited = (self.lock_fd,)
         else:
             environment.pop("MCP_RELEASE_LOCK_FD", None)
+        if self.lock_owner:
+            environment["MCP_RELEASE_LOCK_OWNER"] = ":".join(str(value) for value in self.lock_owner)
+        else:
+            environment.pop("MCP_RELEASE_LOCK_OWNER", None)
+        return environment, inherited
+
+    def delegate(self, argv):
+        # Delegated existing interfaces retain stdout/stderr and their exact exit status.
+        environment, inherited = self.execution()
+        return subprocess.run(argv, env=environment, pass_fds=inherited).returncode
+
+    def command(self, argv, capture=False):
+        # Diagnostics are categorical: Docker/configtest output may contain private config.
+        environment, inherited = self.execution()
         result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env=environment, pass_fds=inherited)
         if result.returncode:
@@ -134,32 +190,64 @@ class Controller:
         private_directory(path.parent, self.uid)
         if path.exists() and (path.is_symlink() or path.stat().st_uid != self.uid):
             raise Denied("untrusted lease file")
+        metadata = None
+        raw_owner = os.environ.get("MCP_RELEASE_LOCK_OWNER", "")
+        if raw_owner:
+            try:
+                parts = raw_owner.split(":")
+                metadata = (int(parts[0]), parts[1], int(parts[2]))
+                if len(parts) != 3:
+                    raise ValueError()
+            except (ValueError, IndexError):
+                raise Denied("invalid ancestor lease metadata")
         supplied = os.environ.get("MCP_RELEASE_LOCK_FD", "")
-        inherited = None
-        if supplied:
-            try:
-                inherited = int(supplied)
-                info = os.fstat(inherited)
-                active = path.stat()
-                if (info.st_dev, info.st_ino) != (active.st_dev, active.st_ino):
-                    raise ValueError("wrong lease descriptor")
-                fd = os.dup(inherited)
-            except (OSError, ValueError):
-                raise Denied("invalid inherited lease descriptor")
-        else:
-            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-        previous_fd = self.runtime.lock_fd
+        fd = None
+        ancestor = False
         try:
-            try:
-                # Shared open-file-description inherits the real lock, not an env flag.
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise Denied("another MCP/Apache publication owns the lease")
+            if supplied:
+                try:
+                    inherited = int(supplied)
+                    info, active = os.fstat(inherited), path.stat()
+                    if (info.st_dev, info.st_ino) != (active.st_dev, active.st_ino):
+                        raise ValueError()
+                    fd = os.dup(inherited)
+                except (OSError, ValueError):
+                    if not metadata or not ancestor_lease(path, metadata, self.uid):
+                        raise Denied("invalid inherited lease descriptor")
+                    ancestor = True
+            if fd is None and not ancestor:
+                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            if not ancestor:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    if metadata and ancestor_lease(path, metadata, self.uid):
+                        os.close(fd)
+                        fd = None
+                        ancestor = True
+                    else:
+                        raise Denied("another MCP/Apache publication owns the lease")
+            previous = self.runtime.lock_fd, self.runtime.lock_owner, self.runtime.lease_check
             self.runtime.lock_fd = fd
-            yield
+            if ancestor:
+                self.runtime.lock_owner = metadata
+                self.runtime.lease_check = lambda: ancestor_lease(path, metadata, self.uid)
+            else:
+                # Preserve the original owner for descendants whose vendor code closes FDs.
+                if not metadata or not ancestor_lease(path, metadata, self.uid):
+                    try:
+                        metadata = (os.getpid(), process_identity(os.getpid())[1], fd)
+                    except (OSError, IndexError):
+                        metadata = None  # Non-Linux fixture: direct inherited FD still works.
+                self.runtime.lock_owner = metadata
+                self.runtime.lease_check = None
+            try:
+                yield
+            finally:
+                self.runtime.lock_fd, self.runtime.lock_owner, self.runtime.lease_check = previous
         finally:
-            self.runtime.lock_fd = previous_fd
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
 
     def active(self):
         path = self.state_dir / "active.json"
@@ -210,7 +298,27 @@ class Controller:
     def vhost(self):
         return private_file(self.cfg["vhost_file"], self.uid).read_text()
 
+    LOG_MARKER = "    # mcp-release excludes amo OAuth queries from root log\n"
+
+    def sanitize_log(self, text):
+        plain = re.compile(r"(?m)^(?P<line>[ \t]*CustomLog[ \t]+[^\n]+[ \t]+combined)[ \t]*$")
+        filtered = re.compile(re.escape(self.LOG_MARKER) + r"(?P<line>[ \t]*CustomLog[ \t]+[^\n]+[ \t]+combined) env=!amo_sensitive\n")
+        if self.LOG_MARKER in text:
+            if len(filtered.findall(text)) != 1 or text.count(self.LOG_MARKER) != 1:
+                raise Denied("managed access log policy changed")
+            return text
+        if len(re.findall(r"(?m)^[ \t]*CustomLog\b", text)) != 1 or len(plain.findall(text)) != 1:
+            raise Denied("expected one unfiltered combined root access log")
+        return plain.sub(lambda match: self.LOG_MARKER + match.group("line") + " env=!amo_sensitive", text, count=1)
+
+    def restore_log(self, text):
+        pattern = re.compile(re.escape(self.LOG_MARKER) + r"(?P<line>[ \t]*CustomLog[ \t]+[^\n]+[ \t]+combined) env=!amo_sensitive\n")
+        if text.count(self.LOG_MARKER) != 1 or len(pattern.findall(text)) != 1:
+            raise Denied("managed log policy cannot be safely reversed")
+        return pattern.sub(lambda match: match.group("line") + "\n", text, count=1)
+
     def with_include(self, text):
+        text = self.sanitize_log(text)
         if self.directive in text:
             if text.count(self.directive) != 1:
                 raise Denied("duplicate managed route")
@@ -280,7 +388,7 @@ class Controller:
                 raise Denied("unregistered route must be reconciled before publication")
             manifest["release_id"] = uuid.uuid4().hex
             name = "amo-mcp-%s-%s" % (manifest["source_sha"][:12], manifest["release_id"][:8])
-            state = {"id": manifest["release_id"], "phase": "prepared", "manifest": manifest, "container": name, "previous": previous, "vhost_added": self.directive not in before}
+            state = {"id": manifest["release_id"], "phase": "prepared", "manifest": manifest, "container": name, "previous": previous, "vhost_added": self.directive not in before, "log_added": self.LOG_MARKER not in before}
             self.write_state(state)
             attempted = False
             route_written = False
@@ -336,6 +444,8 @@ class Controller:
             if current.count(self.directive) > 1:
                 raise Denied("ambiguous managed directive during recovery")
             target, route = current.replace(self.directive, ""), ""
+            if state.get("log_added"):
+                target = self.restore_log(target)
         self.validate(target, route)
         if previous:
             atomic(path, route.encode(), 0o644)
@@ -405,7 +515,7 @@ def main():
                 command = args.args[1:] if args.args[:1] == ["--"] else args.args
                 if not command or not Path(command[0]).is_absolute():
                     raise Denied("run requires an absolute executable and argv after --")
-                controller.runtime.command(command)
+                sys.exit(controller.runtime.delegate(command))
 
 
 if __name__ == "__main__":

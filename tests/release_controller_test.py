@@ -2,6 +2,8 @@ import importlib.util
 import json
 import multiprocessing
 import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -57,7 +59,7 @@ class ReleaseTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / "conf.d").mkdir()
         self.vhost = self.root / "conf.d/mcp.conf"
-        self.before = '<VirtualHost *:443>\nServerName mcp.coddycamp.uz\nDocumentRoot /accepted/current/public\n</VirtualHost>\n'
+        self.before = '<VirtualHost *:443>\nServerName mcp.coddycamp.uz\nDocumentRoot /accepted/current/public\nCustomLog /var/log/httpd/mcp-access.log combined\n</VirtualHost>\n'
         self.vhost.write_text(self.before)
         self.main = self.root / "httpd.conf"
         self.main.write_text('ServerRoot "%s"\nIncludeOptional conf.d/*.conf\n' % self.root)
@@ -110,6 +112,7 @@ class ReleaseTest(unittest.TestCase):
     def test_successful_first_install_and_recovery_preserve_unrelated_edits(self):
         release = self.controller.publish(self.manifest)
         self.assertIn(self.controller.directive, self.vhost.read_text())
+        self.assertIn("combined env=!amo_sensitive", self.vhost.read_text())
         self.assertIn('127.0.0.1:18765', Path(self.cfg["route_file"]).read_text())
         self.assertFalse(any("build" in call for call in self.runtime.calls))
         self.vhost.write_text(self.vhost.read_text() + "# concurrent staff edit\n")
@@ -152,6 +155,40 @@ class ReleaseTest(unittest.TestCase):
                 with self.assertRaises(m.Denied):
                     with self.controller.lease():
                         pass
+
+    def test_conflicting_log_policy_rejects_before_route_mutation(self):
+        self.vhost.write_text(self.before.replace("combined", "combined env=staff_policy"))
+        incoming = {**self.manifest,"expected_vhost_sha256":m.sha(self.vhost.read_bytes())}
+        with self.assertRaises(m.Denied):
+            self.controller.publish(incoming)
+        self.assertFalse(Path(self.cfg["route_file"]).exists())
+
+    def test_delegated_run_preserves_original_stdio_and_exit_status(self):
+        runtime = m.Runtime()
+        with patch.object(m.subprocess, "run", return_value=m.subprocess.CompletedProcess(["/vendor"], 42)) as run:
+            self.assertEqual(runtime.delegate(["/vendor", "--status"]), 42)
+            self.assertNotIn("stdout", run.call_args.kwargs)
+            self.assertNotIn("stderr", run.call_args.kwargs)
+            self.assertEqual(run.call_args.args[0], ["/vendor", "--status"])
+
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "Linux kernel lease proof")
+    def test_vendor_child_closing_fds_uses_actual_ancestor_kernel_lease(self):
+        script = """
+import importlib.util,json,os,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('gate',sys.argv[1]);gate=importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
+gate.private_directory=lambda path,uid=0:Path(path)
+controller=gate.Controller(json.loads(sys.argv[2]),uid=os.getuid())
+with controller.lease():
+    assert controller.runtime.lease_check()
+"""
+        with self.controller.lease():
+            environment, _ = self.runtime.execution()
+            result = subprocess.run([sys.executable,"-c",script,str(SOURCE),json.dumps(self.cfg)],env=environment,close_fds=True,capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            environment["MCP_RELEASE_LOCK_OWNER"] = "%s:wrong:%s" % (os.getpid(),self.runtime.lock_fd)
+            forged = subprocess.run([sys.executable,"-c",script,str(SOURCE),json.dumps(self.cfg)],env=environment,close_fds=True,capture_output=True)
+            self.assertNotEqual(forged.returncode, 0)
 
     def test_root_path_policy_rejects_symlink(self):
         self.trust.stop()

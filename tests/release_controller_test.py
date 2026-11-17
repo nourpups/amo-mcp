@@ -2,6 +2,7 @@ import importlib.util
 import json
 import multiprocessing
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,16 @@ class FakeRuntime(m.Runtime):
 
     def command(self, argv, capture=False):
         self.calls.append(tuple(argv))
+        if "-t" in argv and "-f" in argv:
+            prepared = Path(argv[argv.index("-f")+1]).read_text()
+            vhost_path = re.search(r'^Include "([^"\n]+/vhost.conf)"$', prepared,re.M).group(1)
+            vhost = Path(vhost_path).read_text()
+            if "# mcp-release managed amo route" in vhost:
+                include = re.search(r'^    Include "([^"\n]+/route.inc)"$',vhost,re.M)
+                if not include or not Path(include.group(1)).exists():
+                    raise m.Denied("candidate must validate its exact managed Include syntax")
+                if 'ProxyPass "/amo/"' not in Path(include.group(1)).read_text():
+                    raise m.Denied("candidate Include must reference prepared route content")
         if "-t" in argv and self.invalid:
             raise m.Denied("invalid candidate")
         if "graceful" in argv and self.reload_failure:
@@ -126,6 +137,13 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(self.controller.active(), previous)
         self.assertIn("127.0.0.1:18765",Path(self.cfg["route_file"]).read_text())
         self.assertFalse(("remove",previous["container"]) in self.runtime.calls)
+
+    def test_validation_retains_real_include_directive_and_prepared_route_file(self):
+        target = self.controller.with_include(self.before)
+        self.assertIn('    # mcp-release managed amo route\n    Include "',target)
+        self.assertNotRegex(target,r'Include[^\n]+#')
+        self.controller.validate(target,self.controller.routes(self.manifest))
+        self.assertTrue(any("-t" in call and "-f" in call for call in self.runtime.calls))
 
     def test_invalid_candidate_config_never_changes_active_tree(self):
         self.runtime.invalid = True

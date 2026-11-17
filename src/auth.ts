@@ -64,7 +64,7 @@ export function createAuth(options: AuthOptions) {
   const router = express.Router();
   router.use((req, res, next) => {
     if (req.path.startsWith(`${base}/`) || req.path === `/.well-known/oauth-authorization-server${base}` || req.path === `/.well-known/oauth-protected-resource${resource.pathname}`) {
-      res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
+      res.set({ "Cache-Control": "no-store", "Referrer-Policy": "same-origin", "X-Content-Type-Options": "nosniff" });
     }
     next();
   });
@@ -216,7 +216,7 @@ export function createAuth(options: AuthOptions) {
     // Chromium applies form-action to the POST's redirect chain as well.
     // Only the registered callback saved in this browser's validated flow is allowed.
     const callbackOrigin = pending ? new URL(pending.params.redirectUri).origin : "";
-    res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${callbackOrigin ? ` ${callbackOrigin}` : ""}; frame-ancestors 'none'; base-uri 'none'` }); next();
+    res.set({ "Cache-Control": "no-store", "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${callbackOrigin ? ` ${callbackOrigin}` : ""}; frame-ancestors 'none'; base-uri 'none'` }); next();
   };
   const browserLimit = rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: true, legacyHeaders: false, message: "Слишком много попыток. Повторите позже." });
   router.use([`${base}/login`, `${base}/connect`], express.urlencoded({ extended: false, limit: "24kb" }), browserHeaders);

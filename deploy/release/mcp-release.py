@@ -167,6 +167,18 @@ class Runtime:
             if response.status != 200 or body.get("name") != "amocrm-mcp" or body.get("ok") is not True:
                 raise Denied("candidate is not healthy")
 
+    def public_health(self, manifest):
+        request = urllib.request.Request("https://%s/amo/health" % manifest["host"])
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args):
+                return None
+        opener = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))
+        # Default HTTPS handling validates the public certificate and hostname.
+        with opener.open(request, timeout=3) as response:
+            body = json.load(response)
+            if response.status != 200 or body.get("name") != "amocrm-mcp" or body.get("ok") is not True or body.get("version") != "0.2.0":
+                raise Denied("public candidate route is not healthy")
+
     def identity(self, name):
         self.command(["docker", "exec", name, "node", "-e", "const fs=require('node:fs');if(process.getuid()!==1000)process.exit(1);fs.accessSync('/data/amo.sqlite',fs.constants.R_OK|fs.constants.W_OK)"])
 
@@ -375,6 +387,17 @@ class Controller:
                     raise Denied("candidate did not become healthy")
                 time.sleep(0.25)
 
+    def wait_public_health(self, manifest):
+        deadline = time.monotonic() + self.cfg.get("public_health_timeout", self.cfg.get("health_timeout", 25))
+        while True:
+            try:
+                self.runtime.public_health(manifest)
+                return
+            except Exception:
+                if time.monotonic() >= deadline:
+                    raise Denied("public candidate route did not become healthy")
+                time.sleep(0.25)
+
     def publish(self, incoming):
         with self.lease():
             manifest = self.manifest(incoming)
@@ -417,6 +440,7 @@ class Controller:
                 atomic(self.cfg["vhost_file"], after.encode(), 0o644)
                 self.reload()
                 self.wait_health(manifest)
+                self.wait_public_health(manifest)
                 active = {"manifest": manifest, "container": name, "route_sha256": state["route_sha256"]}
                 atomic(self.state_dir / "active.json", json.dumps(active, sort_keys=True).encode())
                 state["phase"] = "published"

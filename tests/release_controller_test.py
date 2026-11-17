@@ -19,6 +19,7 @@ class FakeRuntime(m.Runtime):
     def __init__(self):
         self.calls = []
         self.unhealthy = False
+        self.public_unhealthy = False
         self.invalid = False
         self.reload_failure = False
 
@@ -41,6 +42,11 @@ class FakeRuntime(m.Runtime):
         self.calls.append(("health", manifest["port"]))
         if self.unhealthy:
             raise m.Denied("unhealthy")
+
+    def public_health(self, manifest):
+        self.calls.append(("public_health",manifest["host"]))
+        if self.public_unhealthy:
+            raise m.Denied("public route unavailable")
 
     def identity(self, name):
         self.calls.append(("identity", name))
@@ -100,6 +106,26 @@ class ReleaseTest(unittest.TestCase):
         self.assertFalse(Path(self.cfg["route_file"]).exists())
         self.assertTrue(any(call[0] == "remove" for call in self.runtime.calls))
         self.assertFalse(any("graceful" in call for call in self.runtime.calls))
+
+    def test_public_unhealthy_after_graceful_restores_only_own_first_install(self):
+        self.runtime.public_unhealthy = True
+        with self.assertRaises(m.Denied):
+            self.controller.publish(self.manifest)
+        self.assertEqual(self.vhost.read_text(), self.before)
+        self.assertFalse(Path(self.cfg["route_file"]).exists())
+        self.assertIsNone(self.controller.active())
+        self.assertTrue(any(call[0] == "public_health" for call in self.runtime.calls))
+        self.assertTrue(any(call[0] == "remove" for call in self.runtime.calls))
+
+    def test_public_unhealthy_candidate_restores_previous_route_without_public_precondition(self):
+        self.controller.publish(self.manifest)
+        previous = self.controller.active()
+        self.runtime.public_unhealthy = True
+        with self.assertRaises(m.Denied):
+            self.controller.publish({**self.manifest,"port":18766,"expected_vhost_sha256":m.sha(self.vhost.read_bytes())})
+        self.assertEqual(self.controller.active(), previous)
+        self.assertIn("127.0.0.1:18765",Path(self.cfg["route_file"]).read_text())
+        self.assertFalse(("remove",previous["container"]) in self.runtime.calls)
 
     def test_invalid_candidate_config_never_changes_active_tree(self):
         self.runtime.invalid = True

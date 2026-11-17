@@ -16,7 +16,7 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://127.0.0.1:8765/amo/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: [CMD, node, -e, "require('node:http').get({hostname:'127.0.0.1',port:8765,path:new URL(process.env.MCP_PUBLIC_URL).pathname.replace(/mcp$/, 'health'),headers:{Host:new URL(process.env.MCP_PUBLIC_URL).host}},r=>{r.resume();process.exitCode=r.statusCode===200?0:1}).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 3

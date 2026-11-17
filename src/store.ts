@@ -21,7 +21,12 @@ export class AuthStore {
       PRIMARY KEY (kind, id)
     ); CREATE INDEX IF NOT EXISTS oauth_expiry ON oauth_state(expires);`);
     // Detect a lost/replaced encryption key at startup, before serving any grants.
-    if (!this.get("metadata", "key-check")) this.put("metadata", "key-check", { ok: true }, Number.MAX_SAFE_INTEGER);
+    try {
+      if (!this.get("metadata", "key-check")) this.put("metadata", "key-check", { ok: true }, Number.MAX_SAFE_INTEGER);
+    } catch {
+      this.db.close();
+      throw new Error("OAuth state encryption key does not match the existing store");
+    }
   }
 
   get<T>(kind: string, id: string): T | undefined {

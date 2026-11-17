@@ -34,7 +34,7 @@ async function fixture() {
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const redirect = "http://127.0.0.1:3999/callback";
-    const query = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: "code", code_challenge: challenge, code_challenge_method: "S256", scope: "amo:read", resource: PUBLIC, state: "client-state", ...changes });
+    const query = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: "code", code_challenge: challenge, code_challenge_method: "S256", scope: "amo:read offline_access", resource: PUBLIC, state: "client-state", ...changes });
     const res = await request(`/amo/oauth/authorize?${query}`, { headers: { cookie } });
     return { res, verifier, redirect, cookie: res.headers.get("set-cookie")?.split(";")[0] ?? cookie, location: res.headers.get("location")! };
   };
@@ -93,7 +93,7 @@ test("shared login cannot bypass staged form or CSRF and upstream errors never r
     assert.equal((await f.form("/amo/login", { flow: login.flow, csrf: login.csrf, login: "operator", password: PASSWORD })).status, 400);
     const rejected = await f.form("/amo/login", { flow: login.flow, csrf: login.csrf, login: "operator", password: "wrong" }, started.cookie); assert.equal(rejected.status, 401);
     const accepted = await f.form("/amo/login", { flow: login.flow, csrf: login.csrf, login: "operator", password: PASSWORD }, started.cookie); const setup = await f.formState(accepted.headers.get("location")!, started.cookie);
-    assert.notEqual(setup.csrf, login.csrf); assert.ok(setup.html.includes('name="token"'));
+    assert.notEqual(setup.csrf, login.csrf); assert.ok(setup.html.includes('name="token"')); assert.ok(setup.html.includes("Test client")); assert.ok(setup.html.includes("127.0.0.1:3999")); assert.ok(setup.html.includes(">Подключить</button>"));
     const badAmo = await f.form("/amo/connect", { flow: setup.flow, csrf: setup.csrf, domain: "company.amocrm.ru", token: "invalid-private-token" }, started.cookie); const html = await badAmo.text(); assert.equal(badAmo.status, 400); assert.ok(!html.includes("private-token")); assert.ok(!html.includes("upstream diagnostic")); assert.equal(badAmo.headers.get("cache-control"), "no-store");
   } finally { await f.close(); }
 });
@@ -109,7 +109,7 @@ test("grants remain isolated with reused OAuth client and browser; PKCE/code bin
     assert.equal((await exchange(first, { redirect_uri: "http://127.0.0.1:3999/different" })).status, 400);
     assert.equal((await exchange(first, { resource: "https://evil.test/mcp" })).status, 400);
     const raced = await Promise.all([exchange(first), exchange(first)]); assert.deepEqual(raced.map((r) => r.status).sort(), [200, 400]); const firstTokens = await raced.find((r) => r.status === 200)!.json();
-    const secondResponse = await exchange(second); assert.equal(secondResponse.status, 200); const secondTokens = await secondResponse.json();
+    const secondResponse = await exchange(second); assert.equal(secondResponse.status, 200); const secondTokens = await secondResponse.json(); assert.equal(secondTokens.scope, "amo:read offline_access");
     const a = await f.auth.verify(firstTokens.access_token), b = await f.auth.verify(secondTokens.access_token); assert.notEqual(a.connectionId, b.connectionId); assert.equal(a.subdomain, "one"); assert.equal(a.token, "amo-test-one"); assert.equal(b.subdomain, "two"); assert.equal(b.token, "amo-test-two");
     const reusedFlow = await f.form("/amo/connect", { flow: first.setup.flow, csrf: first.setup.csrf, domain: "overwrite", token: "amo-test-overwrite" }, first.cookie); assert.equal(reusedFlow.status, 400);
     const refreshResponse = await f.form("/amo/oauth/token", { grant_type: "refresh_token", client_id: client.client_id, refresh_token: firstTokens.refresh_token, resource: PUBLIC }); assert.equal(refreshResponse.status, 200, await refreshResponse.clone().text()); const refreshed = await refreshResponse.json(); assert.equal((await f.auth.verify(refreshed.access_token)).connectionId, a.connectionId); assert.equal((await f.auth.verify(firstTokens.access_token)).connectionId, a.connectionId);

@@ -308,7 +308,7 @@ class Controller:
 
     @property
     def directive(self):
-        return '    Include "%s" # mcp-release managed amo route\n' % self.cfg["route_file"]
+        return '    # mcp-release managed amo route\n    Include "%s"\n' % self.cfg["route_file"]
 
     def vhost(self):
         return private_file(self.cfg["vhost_file"], self.uid).read_text()
@@ -363,7 +363,12 @@ class Controller:
         # A generated configuration is validation input, not a backup of live state.
         with tempfile.TemporaryDirectory(prefix="validate-", dir=self.work_dir) as directory:
             candidate = Path(directory) / "vhost.conf"
-            candidate.write_text(vhost.replace(self.directive, route + "\n"))
+            candidate_route = Path(directory) / "route.inc"
+            candidate_route.write_text(route)
+            # Preserve the exact generated Include directive syntax. Inline route
+            # expansion could conceal an invalid directive in the published file.
+            candidate.write_text(vhost.replace('Include "%s"' % self.cfg["route_file"],
+                                              'Include "%s"' % candidate_route, 1))
             lines = ['Include "%s"' % (candidate if file == target else file) for file in files]
             token = re.compile(r"(?m)^\s*IncludeOptional\s+" + re.escape(pattern) + r"\s*$")
             if len(token.findall(main)) != 1:

@@ -1,0 +1,23 @@
+# Prebuilt image only. No build during publication.
+name: amo-mcp
+services:
+  app:
+    image: ${AMO_MCP_IMAGE:?Set an immutable sha256 image ID or registry digest}
+    init: true
+    restart: unless-stopped
+    env_file: ${AMO_MCP_ENV_FILE:?Set absolute private runtime env path}
+    ports:
+      - "127.0.0.1:${AMO_MCP_PORT:-8765}:8765"
+    volumes:
+      - ${AMO_MCP_DATA_DIR:?Set private SQLite directory}:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, node, -e, "require('node:http').get({hostname:'127.0.0.1',port:8765,path:new URL(process.env.MCP_PUBLIC_URL).pathname.replace(/mcp$/, 'health'),headers:{Host:new URL(process.env.MCP_PUBLIC_URL).host}},r=>{r.resume();process.exitCode=r.statusCode===200?0:1}).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

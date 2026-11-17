@@ -1,0 +1,14 @@
+{
+  "host": "mcp.coddycamp.uz",
+  "architecture": "amd64",
+  "state_dir": "/var/lib/mcp-release",
+  "work_dir": "/run/mcp-release",
+  "lock_file": "/run/mcp-release/lease",
+  "vhost_file": "/etc/httpd/conf.d/mcp.coddycamp.uz-le-ssl.conf",
+  "route_file": "/etc/httpd/mcp-routes/amo-active.inc",
+  "apache_config": "/etc/httpd/conf/httpd.conf",
+  "apache_root": "/etc/httpd",
+  "include_pattern": "conf.d/*.conf",
+  "apache_binary": "/usr/sbin/httpd",
+  "health_timeout": 25
+}

@@ -93,7 +93,7 @@ test("shared login cannot bypass staged form or CSRF and upstream errors never r
     assert.equal((await f.form("/amo/login", { flow: login.flow, csrf: login.csrf, login: "operator", password: PASSWORD })).status, 400);
     const rejected = await f.form("/amo/login", { flow: login.flow, csrf: login.csrf, login: "operator", password: "wrong" }, started.cookie); assert.equal(rejected.status, 401);
     const accepted = await f.form("/amo/login", { flow: login.flow, csrf: login.csrf, login: "operator", password: PASSWORD }, started.cookie); const setup = await f.formState(accepted.headers.get("location")!, started.cookie);
-    assert.notEqual(setup.csrf, login.csrf); assert.ok(setup.html.includes('name="token"')); assert.ok(setup.html.includes("Test client")); assert.ok(setup.html.includes("127.0.0.1:3999")); assert.ok(setup.html.includes(">Подключить</button>"));
+    assert.notEqual(setup.csrf, login.csrf); assert.ok(setup.res.headers.get("content-security-policy")!.includes("form-action 'self' http://127.0.0.1:3999;")); assert.ok(setup.html.includes('name="token"')); assert.ok(setup.html.includes("Test client")); assert.ok(setup.html.includes("127.0.0.1:3999")); assert.ok(setup.html.includes(">Подключить</button>"));
     const badAmo = await f.form("/amo/connect", { flow: setup.flow, csrf: setup.csrf, domain: "company.amocrm.ru", token: "invalid-private-token" }, started.cookie); const html = await badAmo.text(); assert.equal(badAmo.status, 400); assert.ok(!html.includes("private-token")); assert.ok(!html.includes("upstream diagnostic")); assert.equal(badAmo.headers.get("cache-control"), "no-store");
   } finally { await f.close(); }
 });

@@ -1,5 +1,6 @@
 # Include INSIDE the existing mcp.coddycamp.uz TLS VirtualHost.
 # Keep the existing root MCP and its discovery routes unchanged.
+ProxyPreserveHost On
 ProxyPass "/.well-known/oauth-authorization-server/amo" "http://127.0.0.1:8765/.well-known/oauth-authorization-server/amo"
 ProxyPassReverse "/.well-known/oauth-authorization-server/amo" "http://127.0.0.1:8765/.well-known/oauth-authorization-server/amo"
 ProxyPass "/.well-known/oauth-protected-resource/amo/mcp" "http://127.0.0.1:8765/.well-known/oauth-protected-resource/amo/mcp"

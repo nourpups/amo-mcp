@@ -37,7 +37,7 @@ The checked route template is `deploy/apache-amo.inc`; `@PORT@` is rendered by t
 
 Supported Apache, certificate renewal and discovered controller entrypoints share the installed OS lease. Arbitrary privileged root-shell commands remain outside that interface. Preserve the vendor executables and wiring metadata; upgrades must reverify the wrappers and loaded systemd bindings.
 
-Monitor before publication and execute local forward operations through `dev-task-state release-run --operation forward`. A failed monitor prevents additional forward operations. Keep failure history and coverage gaps explicit; recovery uses the existing controller release ID and does not require the failed new public endpoint to be healthy. No backup creation or known outage is implicitly authorized.
+Monitor before publication and execute local forward operations through `dev-task-state release-run --operation forward`. A failed monitor prevents additional forward operations. Keep failure history and coverage gaps explicit; recovery uses the existing controller release ID and does not require the failed new public endpoint to be healthy. Merge permission authorizes the standard production release and its normal restart/route publication without a separate consent record or outage window. Backups and SQL still require separate user consent.
 
 ## Acceptance
 
